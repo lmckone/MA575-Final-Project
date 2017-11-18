@@ -1,0 +1,300 @@
+---
+title: "Final Project"
+author: "Rachel Feingold"
+date: "11/18/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Source of data:
+Fanaee-T, Hadi, and Gama, Joao, ’Event labeling combining ensemble detectors and background knowledge’, Progress in Artificial Intelligence (2013): pp. 1-15, Springer Berlin Heidelberg.
+
+
+Initial Notes: No dbikes rented with weather=4 
+## Load Data
+```{r}
+bikedata <- read.csv("bike-day.csv",header=T)
+attach(bikedata)
+```
+
+## 1. Draw Scatterplots of the data
+
+```{r}
+pairs(bikedata)
+pairs(~cnt+season++windspeed+hum+atemp+temp)
+
+#correlations within training data
+pairs(~season+workingday+weathersit+temp+atemp+hum+windspeed+cnt)
+
+#looking at over time fluctuation incasual users
+casualusers <- ts(bikedata$casual)
+plot.ts(casualusers)
+
+#registered users
+regusers <- ts(bikedata$registered)
+plot.ts(regusers)
+
+#we can look at just casual, just reg, and both in regression
+library(dplyr)
+library(magrittr)
+
+#we created a new variable, pctcasual
+bikedata %<>% mutate(pctcasual=casual/cnt)
+train <- bikedata[bikedata$yr==0,]
+test <- bikedata[bikedata$yr==1,]
+attach(bikedata)
+
+# Correlation matrix
+X <- cbind(season,weathersit,temp,atemp,hum,windspeed,pctcasual,cnt)
+c <- cor(X)
+round(c,3)
+```
+season and workingday - no correlation
+temp and atemp are highly correlated - atemp is a bit more correlated with cnt so we will keep that one
+cnt and season are highly correlated
+cnt and windspeed are highly correlated
+cnt and weathersit are highly correlated
+pctcasual and cnt are correlated
+
+```{r}
+model1 <- lm(cnt~season+weathersit+atemp+hum+windspeed+pctcasual, data=train)
+summary(model1)
+```
+
+
+##Diagnostics Model 1
+```{r fig.width=8, fig.height=8, echo=F}
+require(car)
+attach(train)
+par(mfrow=c(2,2))
+plot(model1)
+avp <- avPlots(model = model1, intercept = T )
+
+require(alr3)
+
+par(mfrow=c(3,3))
+mmp(model1,season,key=T)
+mmp(model1,weathersit,key=T)
+mmp(model1,atemp,key=T)
+mmp(model1,hum,key=T)
+mmp(model1,windspeed,key=T)
+mmp(model1,pctcasual,key=T)
+mmp(model1,model1$fitted.values,xlab="Fitted Values",key=F)
+
+#Variance inflation factors
+round(vif(mod = model1), 3)
+
+```
+-slight downward curve in the residual plot
+-potential non-normality of errors - kurtosis
+-slightly increasing variance
+-69 is a leverage point, but not a bad leverage point
+-avPlots all look pretty good, pctcasual is the worst but still some slope
+-marginal model plots look pretty good except for atemp
+-All the variance inflation factors are under 5, which is good.
+
+
+##Model Transformations - Model 2
+```{r fig.width=8, fig.height=8, echo=F}
+# inverse response plot
+inverseResponsePlot(model1,key=TRUE)
+
+#transformation?
+model2 <- lm(sqrt(cnt)~season+weathersit+atemp+hum+windspeed+log(pctcasual), data=train)
+summary(model2)
+par(mfrow=c(2,2))
+plot(model2)
+
+```
+Inverse response plot showed us that our model is actually pretty good
+We tried some basic transformations of x and y to deal with the increasing variance, but had no success.
+We realized we needed to deal with the potential autocorrelation of our errors because we're working with time-dependent data.
+
+##Autocorrelation
+```{r fig.width=8, fig.height=8, echo=F}
+attach(train)
+acf(cnt)
+
+require(nlme)
+m.gls <- gls(cnt~instant+season+weathersit+atemp+hum+windspeed+pctcasual, 
+             correlation=corAR1(form=~instant),method="ML")
+summary(m.gls)
+g <- lm(cnt~instant+season+weathersit+atemp+hum+windspeed+pctcasual,data=train)
+rho <- .5258898 
+x <- model.matrix(g)
+Sigma <- diag(length(instant))
+Sigma <- rho^abs(row(Sigma)-col(Sigma))
+sm <- chol(Sigma)
+smi <- solve(t(sm))
+xstar <- smi %*% x
+ystar <- smi %*% cnt
+m1tls <- lm(ystar ~ xstar-1) 
+summary(m1tls)
+
+
+acf(ystar)
+```
+-We looked at the acf of the untransformed data and the errors were highly correlated
+-We decided to first try an AR(1) model to deal with the temporal correlation
+-We transformed the errors so that they were uncorrelated and transformed the model correspondingly
+-The ACF looks mch better - not perfect but better.
+-Our model's R-squared is now even higher and all of our predictors remained highly significant.
+
+##Diagnostics on our Transformed model
+```{r fig.width=8, fig.height=8, echo=F}
+par(mfrow=c(2,2))
+plot(m1tls)
+avp <- avPlots(model = m1tls, intercept = F)
+
+require(alr3)
+
+par(mfrow=c(3,3))
+mmp(m1tls,season,key=T)
+mmp(m1tls,weathersit,key=T)
+mmp(m1tls,atemp,key=T)
+mmp(m1tls,hum,key=T)
+mmp(m1tls,windspeed,key=T)
+mmp(m1tls,pctcasual,key=T)
+mmp(m1tls,m1tls$fitted.values,xlab="Fitted Values",key=F)
+
+#Variance inflation factors
+#round(vif(mod = m1tls), 3)
+
+```
+
+##ANOVA
+```{r}
+anova(m1tls)
+```
+-our anova table reinforces that all of the variables in our model are significant
+
+
+## Variable Selection
+```{r}
+# install.packages("leaps")
+xstar <- as.data.frame(xstar)
+X <- cbind(xstar$instant,xstar$season,xstar$weathersit,xstar$atemp,xstar$hum,xstar$windspeed,xstar$pctcasual)
+require(leaps)
+b <- regsubsets(as.matrix(X),ystar)
+rs <- summary(b)
+par(mfrow=c(1,2))
+plot(1:7,rs$adjr2,xlab="Subset Size",ylab="Adjusted R-squared")
+require(car)
+subsets(b,statistic=c("adjr2"), legend= T)
+attach(xstar)
+rs$adjr2
+om1 <- lm(ystar~atemp)
+om2 <- lm(ystar~weathersit+atemp)
+om3 <- lm(ystar~season+weathersit+atemp)
+om4 <- lm(ystar~season+weathersit+atemp+pctcasual)
+om5 <- lm(ystar~season+weathersit+atemp+hum+pctcasual)
+om6 <- lm(ystar~season+weathersit+atemp+hum+windspeed+pctcasual)
+om7 <- lm(ystar~instant+season+weathersit+atemp+hum+windspeed+pctcasual)
+#Subset size=1
+n <- length(om1$residuals)
+npar <- length(om1$coefficients) +1
+#Calculate AIC
+extractAIC(om1,k=2)
+#Calculate AICc
+extractAIC(om1,k=2)+2*npar*(npar+1)/(n-npar-1)
+#Calculate BIC
+extractAIC(om1,k=log(n))
+
+#Subset size=2
+n <- length(om2$residuals)
+npar <- length(om2$coefficients) +1
+#Calculate AIC
+extractAIC(om2,k=2)
+#Calculate AICc
+extractAIC(om2,k=2)+2*npar*(npar+1)/(n-npar-1)
+#Calculate BIC
+extractAIC(om2,k=log(n))
+
+#Subset size=3
+n <- length(om3$residuals)
+npar <- length(om3$coefficients) +1
+#Calculate AIC
+extractAIC(om3,k=2)
+#Calculate AICc
+extractAIC(om3,k=2)+2*npar*(npar+1)/(n-npar-1)
+#Calculate BIC
+extractAIC(om3,k=log(n))
+
+#Subset size=4
+n <- length(om4$residuals)
+npar <- length(om4$coefficients) +1
+#Calculate AIC
+extractAIC(om4,k=2)
+#Calculate AICc
+extractAIC(om4,k=2)+2*npar*(npar+1)/(n-npar-1)
+#Calculate BIC
+extractAIC(om4,k=log(n))
+
+#Subset size=5
+n <- length(om5$residuals)
+npar <- length(om5$coefficients) +1
+#Calculate AIC
+extractAIC(om5,k=2)
+#Calculate AICc
+extractAIC(om5,k=2)+2*npar*(npar+1)/(n-npar-1)
+#Calculate BIC
+extractAIC(om5,k=log(n))
+
+#Subset size=6
+n <- length(om6$residuals)
+npar <- length(om6$coefficients) +1
+#Calculate AIC
+extractAIC(om6,k=2)
+#Calculate AICc
+extractAIC(om6,k=2)+2*npar*(npar+1)/(n-npar-1)
+#Calculate BIC
+extractAIC(om6,k=log(n))
+
+#Subset size=7
+n <- length(om7$residuals)
+npar <- length(om7$coefficients) +1
+#Calculate AIC
+extractAIC(om7,k=2)
+#Calculate AICc
+extractAIC(om7,k=2)+2*npar*(npar+1)/(n-npar-1)
+#Calculate BIC
+extractAIC(om7,k=log(n))
+
+##TABLE EFFORT
+
+scores <- data.frame(Predictors = c('SEAS',
+                                    'SEAS, WEATH',
+                                    'SEAS, WEATH, ATEMP',
+                                    'SEAS, WEATH, ATEMP, PCT',
+                                    'SEAS, WEATH, ATEMP, HUM, PCT', 
+                                    'SEAS, WEATH, ATEMP, HUM, WIND, PCT', 
+                                    'INST, SEAS, WEATH, ATEMP, HUM, WIND, PCT'), 
+                     R_squared = rs$adjr2, 
+                     AIC=c(4942.668, 4844.508, 4809.817, 4797.776, 4787.877, 4777.201, 4779.101),
+                     AICc=c(4942.734359, 4844.618660, 4809.984300, 4798.010379, 4788.191184, 4777.605799, 4779.608458),
+                     BIC = c(4950.468, 4856.207, 4825.417, 4817.275, 4811.277, 4804.501, 4810.301))
+print(scores)
+
+```
+-even though there wasn't a great deal of redundancy in our model, we wanted to perform variable selection just to make sure that we didn't need to exclude any variables.
+-from our variable selection, we see that the best model is the one with all of the variables except instant, which was the full model that we fit initially. This reinforces that fact that all of our variables are significant and we don't need to exclude any of them.
+
+We will not perform any cross-validation because our model has no extranneous variables.
+
+##Prediction
+```{r}
+test_pred <- predict(model1, test[1:365,])
+test_pred
+
+require(Metrics)
+rmse(test$cnt[1:365], test_pred)
+
+test_table <- data.frame(cbind(test_pred, test$cnt[1:365]))
+library(ggplot2)
+ggplot(aes(test_pred, V2), data=test_table) + geom_point()
+```
+
