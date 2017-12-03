@@ -9,11 +9,6 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
-Source of data:
-Fanaee-T, Hadi, and Gama, Joao, ’Event labeling combining ensemble detectors and background knowledge’, Progress in Artificial Intelligence (2013): pp. 1-15, Springer Berlin Heidelberg.
-
-
 Initial Notes: No dbikes rented with weather=4 
 ## Load Data
 ```{r}
@@ -169,6 +164,7 @@ mmp(m1tls,m1tls$fitted.values,xlab="Fitted Values",key=F)
 ##ANOVA
 ```{r}
 anova(m1tls)
+summary(m1tls)
 ```
 -our anova table reinforces that all of the variables in our model are significant
 
@@ -264,7 +260,7 @@ extractAIC(om7,k=2)+2*npar*(npar+1)/(n-npar-1)
 #Calculate BIC
 extractAIC(om7,k=log(n))
 
-##TABLE EFFORT
+##TABLE 
 
 scores <- data.frame(Predictors = c('SEAS',
                                     'SEAS, WEATH',
@@ -297,4 +293,43 @@ test_table <- data.frame(cbind(test_pred, test$cnt[1:365]))
 library(ggplot2)
 ggplot(aes(test_pred, V2), data=test_table) + geom_point()
 ```
+
+## Prediction- Rachel Attempt :)
+
+```{r}
+attach(train)
+prediction <- predict(m1tls, newdata = test[1:365,])
+m.gls <- gls(cnt~instant+season+weathersit+atemp+hum+windspeed+pctcasual, 
+             correlation=corAR1(form=~instant),method="ML")
+pred <- predict(m.gls, test)
+
+require(Metrics)
+rmse(test$cnt,pred) #2210
+plot(test$cnt,pred)
+abline(lsfit(test$cnt,pred),col="blue")
+
+plottable <- data.frame(cbind(test$cnt, pred, test$season))
+plottable$V3 <- factor(plottable$V3)
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+
+ggplot(plottable, aes(V1, pred, color=V3)) + 
+  geom_point() +
+  theme_light() +
+  scale_color_manual(
+    values=gg_color_hue(4),
+    name="Season",
+    labels = c("1" = "Spring", "2"="Summer", "3"="Fall", "4"="Winter")
+  ) +
+  theme(text = element_text(size=14)) +
+  labs(y="Predicted values",
+       x="Actual values"
+       )
+```
+
+
 
