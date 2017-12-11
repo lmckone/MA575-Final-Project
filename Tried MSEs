@@ -1,0 +1,24 @@
+##Prediction
+
+```{r}
+attach(train)
+
+model1 <- lm(cnt~season+holiday+workingday+weathersit+temp+hum+windspeed+pctcasual, data=train)
+
+
+prediction <- predict(model1, newdata = test[1:365,])
+pred <- predict(model1, test)
+require(Metrics)
+rmse(test$cnt,pred) #2365.49
+
+
+prediction <- predict(model2, newdata = test[1:365,])
+pred <- predict(model2, test)
+require(Metrics)
+rmse(test$cnt,pred) #5820.094
+
+
+test_pred <- predict(m1tls, test[1:365,])
+test_pred
+library(Metrics)
+rmse(test$cnt[1:365], test_pred) #4032.986
